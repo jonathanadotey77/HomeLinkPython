@@ -195,7 +195,7 @@ class HomeLinkClient:
                     print(f"sendBufferTcp() failed")
                     break
 
-                recvBuffer = self.receiveBufferTcp(dataSocket, 17)
+                recvBuffer = receiveBufferTcp(dataSocket, 17)
                 if recvBuffer == None:
                     print(f"recvBufferTcp() failed")
                     break
@@ -213,7 +213,7 @@ class HomeLinkClient:
 
         self.sendCommand(dataSocket, "READ_FILE")
 
-        info = self.receiveBufferTcp(dataSocket, 1)
+        info = receiveBufferTcp(dataSocket, 1)
 
         if not info:
             print("recvBufferTcp() failed")
@@ -221,7 +221,7 @@ class HomeLinkClient:
         if info[0] == 0:
             return ""
 
-        fileInfo = self.receiveBufferTcp(dataSocket, 160)
+        fileInfo = receiveBufferTcp(dataSocket, 160)
         if not fileInfo:
             print("Could not fetch file info")
             return None
@@ -254,7 +254,7 @@ class HomeLinkClient:
             blockNumber = 0
 
             while bytesReceived < fileSize:
-                buffer = self.receiveBufferTcp(dataSocket, FILE_BLOCK_SIZE + 16)
+                buffer = receiveBufferTcp(dataSocket, FILE_BLOCK_SIZE + 16)
                 if not buffer:
                     print("recvBufferTcp() failed")
                     success = False
