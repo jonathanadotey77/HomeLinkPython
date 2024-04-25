@@ -95,7 +95,7 @@ class HomeLinkClient:
             )
             registerRequestPacket = RegisterRequestPacket(
                 connectionId,
-                self.host_id,
+                self.hostId,
                 self.serviceId,
                 rsaEncrypt(passwordData, self.serverPublicKey),
             )
@@ -127,7 +127,7 @@ class HomeLinkClient:
             )
             loginRequestPacket = LoginRequestPacket(
                 connectionId,
-                self.host_id,
+                self.hostId,
                 self.serviceId,
                 rsaEncrypt(passwordData, self.serverPublicKey),
             )
