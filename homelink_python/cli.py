@@ -1,4 +1,5 @@
 from homelink_python.client import HomeLinkClient
+from homelink_python.packet import LoginStatus
 
 import os
 import pathlib
@@ -8,15 +9,13 @@ class HomeLinkConfig:
     def __init__(self):
         self.hostId = ""
         self.serverAddress = ""
-        self.serverControlPort = ""
-        self.serverDataPort = ""
+        self.serverPort = ""
 
     def valid(self) -> bool:
         return (
             self.hostId
             and self.serverAddress
-            and self.serverControlPort
-            and self.serverDataPort
+            and self.serverPort
         )
 
 
@@ -35,10 +34,8 @@ def readConfig(configFilePath: str) -> HomeLinkConfig:
                 config.hostId = value
             elif key == "server_address":
                 config.serverAddress = value
-            elif key == "server_control_port":
-                config.serverControlPort = value
-            elif key == "server_data_port":
-                config.serverDataPort = value
+            elif key == "server_port":
+                config.serverPort = value
 
     return config
 
@@ -56,24 +53,20 @@ def editConfig(args: list, configFilePath: str):
             config.hostId = value
         elif key == "--server-address":
             config.serverAddress = value
-        elif key == "--server-control-port":
-            config.serverControlPort = value
-        elif key == "--server-data-port":
-            config.serverDataPort = value
+        elif key == "--server-port":
+            config.serverPort = value
 
     with open(configFilePath, "w") as configFile:
         if config.hostId:
             configFile.write(f"host_id {config.hostId}\n")
         if config.serverAddress:
             configFile.write(f"server_address {config.serverAddress}\n")
-        if config.serverControlPort:
-            configFile.write(f"server_control_port {config.serverControlPort}\n")
-        if config.serverDataPort:
-            configFile.write(f"server_data_port {config.serverDataPort}\n")
+        if config.serverPort:
+            configFile.write(f"server_port {config.serverPort}\n")
 
-def handleCommand(serviceId: str, args: list):
+def handleCommand(client: HomeLinkClient, args: list):
     pass
-        
+
 def main():
 
     configFilePath = os.getenv("HOMELINK_PYTHON_CLI_CONFIG")
@@ -95,7 +88,15 @@ def main():
     if not config.valid():
         print("Incomplete config file!")
     
-    handleCommand(sys.argv[1], sys.argv[2:])
+    client = HomeLinkClient(config.hostId, sys.argv[1], config.serverAddress, int(config.serverPort))
+    client.connect()
+    status = client.login("hi")
+    if status != LoginStatus.LOGIN_SUCCESS:
+        print("Login failed")
+        return
+    handleCommand(client, sys.argv[2:])
+    client.logout()
+    client.destruct()
 
 
 if __name__ == "__main__":

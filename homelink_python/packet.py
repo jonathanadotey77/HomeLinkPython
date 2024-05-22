@@ -1,4 +1,7 @@
+from homelink_python.net import sendBufferTcp, receiveBufferTcp
+import socket
 import struct
+import sys
 
 class PacketTypeException(Exception):
     pass
@@ -6,40 +9,53 @@ class PacketTypeException(Exception):
 class LoginStatus:
     LOGIN_FAILED = 0
     LOGIN_SUCCESS = 1
-    NO_AVAILABLE_PORT = 2
-    NO_SUCH_USER = 3
-    USER_ALREADY_EXISTS = 4
+    NO_SUCH_SERVICE = 2
+
+class RegisterStatus:
+    REGISTER_FAILED = 0
+    REGISTER_SUCCESS = 1
+    ALREADY_EXISTS = 2
 
 class PacketType:
-    CLI = 255
-    ACK = 0
-    KEY_REQUEST = 1
-    KEY_RESPONSE = 2
-    HANDSHAKE = 3
-    COMMAND = 4
-    LOGIN_REQUEST = 5
-    LOGIN_RESPONSE = 6
-    REGISTER_REQUEST = 7
-    REGISTER_RESPONSE = 8
-    LOGOUT = 9
+    ACK = 1
+    KEY_REQUEST = 2
+    KEY_RESPONSE = 3
+    HANDSHAKE = 4
+    COMMAND = 5
+    LOGIN_REQUEST = 6
+    LOGIN_RESPONSE = 7
+    REGISTER_REQUEST = 8
+    REGISTER_RESPONSE = 9
+    LOGOUT = 10
+    ASYNC_NOTIFICATION = 11
+
+class RegistrationType:
+    HOST_REGISTRATION = 1
+    SERVICE_REGISTRATION = 2
+
+class AsyncEventType:
+    FILE_EVENT = 1
+    ANY_EVENT = 255
 
 class AckPacket:
-    packetType = PacketType.ACK
+    byteFormat = "!BI"
     def __init__(self, value: int):
+        self.packetType = PacketType.ACK
         self.value = value
 
     @staticmethod
     def serialize(packet):
-        return struct.pack("!BI", packet.packetType, packet.value)
+        return struct.pack(AckPacket.byteFormat, packet.packetType, packet.value)
 
     @staticmethod
     def deserialize(buffer):
-        packetType, value = struct.unpack("!BI", buffer)
+        packetType, value = struct.unpack(AckPacket.byteFormat, buffer)
         if packetType != PacketType.ACK:
             raise PacketTypeException()
-        return KeyResponsePacket(value)
+        return ConnectionResponsePacket(value)
 
-class KeyRequestPacket:
+class ConnectionRequestPacket:
+    byteFormat = "!BI512s"
     def __init__(self, connectionId: int, rsaPublicKey: str):
         self.packetType = PacketType.KEY_REQUEST
         self.connectionId = connectionId
@@ -48,7 +64,7 @@ class KeyRequestPacket:
     @staticmethod
     def serialize(packet):
         return struct.pack(
-            "!BI512s",
+            ConnectionRequestPacket.byteFormat,
             packet.packetType,
             packet.connectionId,
             packet.rsaPublicKey.encode("utf-8"),
@@ -56,13 +72,14 @@ class KeyRequestPacket:
 
     @staticmethod
     def deserialize(buffer: bytearray):
-        packetType, connectionId, rsaPublicKey = struct.unpack("!BI512s", buffer)
+        packetType, connectionId, rsaPublicKey = struct.unpack(ConnectionRequestPacket.byteFormat, buffer)
         if packetType != PacketType.KEY_REQUEST:
             raise PacketTypeException()
-        return KeyRequestPacket(connectionId, rsaPublicKey)
+        return ConnectionRequestPacket(connectionId, rsaPublicKey)
 
 
-class KeyResponsePacket:
+class ConnectionResponsePacket:
+    byteFormat = "BB512s256s"
     def __init__(self, success: bool, rsaPublicKey: str, aesKey: bytearray):
         self.packetType = PacketType.KEY_RESPONSE
         self.success = success
@@ -72,7 +89,7 @@ class KeyResponsePacket:
     @staticmethod
     def serialize(packet):
         return struct.pack(
-            "BB512s256s",
+            ConnectionResponsePacket.byteFormat,
             packet.packetType,
             1 if packet.success else 0,
             packet.rsaPublicKey.encode("utf8"),
@@ -81,22 +98,27 @@ class KeyResponsePacket:
 
     @staticmethod
     def deserialize(buffer):
-        packetType, success, rsaPublicKey, aesKey = struct.unpack("BB512s256s", buffer)
+        packetType, success, rsaPublicKey, aesKey = struct.unpack(ConnectionResponsePacket.byteFormat, buffer)
         if packetType != PacketType.KEY_RESPONSE:
             raise PacketTypeException()
-        return KeyResponsePacket(success == 1, rsaPublicKey.decode("utf-8"), aesKey)
+        return ConnectionResponsePacket(success == 1, rsaPublicKey.decode("utf-8"), aesKey)
 
 class CommandPacket:
+    byteFormat = "!BI80s256s"
     def __init__(self, connectionId: int, sessionToken: bytearray, data: bytearray):
         self.packetType = PacketType.COMMAND
         self.connectionId = connectionId
         self.sessionToken = sessionToken
         self.data = data
+    
+    @staticmethod
+    def size():
+        return struct.calcsize(CommandPacket.byteFormat)
 
     @staticmethod
     def serialize(packet):
         return struct.pack(
-            "!BI256s256s",
+            CommandPacket.byteFormat,
             packet.packetType,
             packet.connectionId,
             packet.sessionToken,
@@ -105,12 +127,13 @@ class CommandPacket:
 
     @staticmethod
     def deserialize(buffer: bytearray):
-        packetType, connectionId, sessionToken, data = struct.unpack("!BI256s256s", buffer)
+        packetType, connectionId, sessionToken, data = struct.unpack(CommandPacket.byteFormat, buffer)
         if packetType != PacketType.COMMAND:
             raise PacketTypeException()
         return CommandPacket(connectionId, sessionToken, data)
 
 class LoginRequestPacket:
+    byteFormat = "!BI33s33s256s"
     def __init__(self, connectionId: int, hostId: str, serviceId: str, data: bytearray):
         self.packetType = PacketType.LOGIN_REQUEST
         self.connectionId = connectionId
@@ -121,7 +144,7 @@ class LoginRequestPacket:
     @staticmethod
     def serialize(packet):
         return struct.pack(
-            "!BI33s33s256s",
+            LoginRequestPacket.byteFormat,
             packet.packetType,
             packet.connectionId,
             packet.hostId.encode("UTF-8"),
@@ -131,12 +154,13 @@ class LoginRequestPacket:
 
     @staticmethod
     def deserialize(buffer: bytearray):
-        packetType, connectionId, hostId, serviceId, data = struct.unpack("!BI33s33s256s", buffer)
+        packetType, connectionId, hostId, serviceId, data = struct.unpack(LoginRequestPacket.byteFormat, buffer)
         if packetType != PacketType.LOGIN_REQUEST:
             raise PacketTypeException()
         return LoginRequestPacket(connectionId, hostId, serviceId, data)
 
 class LoginResponsePacket:
+    byteFormat = "!BB80s"
     def __init__(self, status: bool, sessionKey: bytearray):
         self.packetType = PacketType.LOGIN_RESPONSE
         self.status = status
@@ -145,7 +169,7 @@ class LoginResponsePacket:
     @staticmethod
     def serialize(packet):
         return struct.pack(
-            "!BB256s",
+            LoginResponsePacket.byteFormat,
             packet.packetType,
             packet.status,
             packet.sessionKey
@@ -153,39 +177,41 @@ class LoginResponsePacket:
 
     @staticmethod
     def deserialize(buffer: bytearray):
-        packetType, status, sessionKey = struct.unpack("!BB256s", buffer)
+        packetType, status, sessionKey = struct.unpack(LoginResponsePacket.byteFormat, buffer)
         if packetType != PacketType.LOGIN_RESPONSE:
             raise PacketTypeException()
         return LoginResponsePacket(status, sessionKey)
 
 class RegisterRequestPacket:
-    def __init__(self, connectionId: int, hostId: str, serviceId: str, sessionKey: bytearray):
+    byteFormat = "BB33s33s256s"
+    def __init__(self, registrationType: int, hostId: str, serviceId: str, data: bytearray):
         self.packetType = PacketType.REGISTER_REQUEST
-        self.connectionId = connectionId
+        self.registrationType = registrationType
         self.hostId = hostId
         self.serviceId = serviceId
-        self.sessionKey = sessionKey
+        self.data = data
 
     @staticmethod
     def serialize(packet):
         return struct.pack(
-            "!BI33s33s256s",
+            RegisterRequestPacket.byteFormat,
             packet.packetType,
-            packet.connectionId,
+            packet.registrationType,
             packet.hostId.encode("UTF-8"),
             packet.serviceId.encode("UTF-8"),
-            packet.sessionKey
+            packet.data
         )
 
     @staticmethod
     def deserialize(buffer: bytearray):
-        packetType, connectionId, hostId, serviceId, sessionKey = struct.unpack("!BI33s33s256s", buffer)
+        packetType, registrationType, hostId, serviceId, sessionKey = struct.unpack(RegisterRequestPacket.byteFormat, buffer)
         if packetType != PacketType.REGISTER_REQUEST:
             raise PacketTypeException()
-        return RegisterRequestPacket(connectionId, hostId, serviceId, sessionKey)
+        return RegisterRequestPacket(registrationType, hostId, serviceId, sessionKey)
 
 
 class RegisterResponsePacket:
+    byteFormat = "!BB"
     def __init__(self, status: bool):
         self.packetType = PacketType.REGISTER_RESPONSE
         self.status = status
@@ -193,36 +219,74 @@ class RegisterResponsePacket:
     @staticmethod
     def serialize(packet):
         return struct.pack(
-            "!BB",
+            RegisterResponsePacket.byteFormat,
             packet.packetType,
             packet.status
         )
 
     @staticmethod
     def deserialize(buffer: bytearray):
-        packetType, status = struct.unpack("!BB", buffer)
+        packetType, status = struct.unpack(RegisterResponsePacket.byteFormat, buffer)
         if packetType != PacketType.REGISTER_RESPONSE:
             raise PacketTypeException()
         return RegisterResponsePacket(status)
 
 class LogoutPacket:
-    def __init__(self, connectionId: int, sessionKey: bytearray):
+    byteFormat = "!BI256s"
+    def __init__(self, connectionId: int, data: bytearray):
         self.packetType = PacketType.LOGOUT
         self.connectionId = connectionId
-        self.sessionKey = sessionKey
+        self.data = data
     
     @staticmethod
     def serialize(packet):
         return struct.pack(
-            "!BI256s",
+            LogoutPacket.byteFormat,
             packet.packetType,
             packet.connectionId,
-            packet.sessionToken
+            packet.data
         )
 
     @staticmethod
     def deserialize(buffer: bytearray):
-        packetType, connectionId, sessionToken = struct.unpack("!BI256s", buffer)
+        packetType, connectionId, data = struct.unpack(LogoutPacket.byteFormat, buffer)
         if packetType != PacketType.LOGOUT:
             raise PacketTypeException()
-        return LogoutPacket(connectionId, sessionToken)
+        return LogoutPacket(connectionId, data)
+
+class AsyncNotificationPacket:
+    byteFormat = "!BBI"
+    def __init__(self, eventType: int, tag: int):
+        self.packetType = PacketType.ASYNC_NOTIFICATION
+        self.eventType = eventType
+        self.tag = tag
+    
+    @staticmethod
+    def serialize(packet):
+        return struct.pack(
+            AsyncNotificationPacket.byteFormat,
+            packet.packetType,
+            packet.eventType,
+            packet.tag
+        )
+
+    @staticmethod
+    def deserialize(buffer: bytearray):
+        packetType, eventType, tag = struct.unpack(AsyncNotificationPacket.byteFormat, buffer)
+        if packetType != PacketType.ASYNC_NOTIFICATION:
+            raise PacketTypeException()
+        return AsyncNotificationPacket(eventType, tag)
+
+def sendPacket(dataSocket: socket.socket, packet) -> bool:
+    status = sendBufferTcp(dataSocket, packet.__class__.serialize(packet))
+    if not status:
+        print("sendBufferTcp() failed", file=sys.stderr)
+    return status
+
+def recvPacket(dataSocket: socket.socket, PacketClass: type) -> bytearray | None:
+    data = receiveBufferTcp(dataSocket, struct.calcsize(PacketClass.byteFormat))
+    if not data:
+        print("recvBufferTcp() failed", file=sys.stderr)
+        return None
+    
+    return PacketClass.deserialize(data)
